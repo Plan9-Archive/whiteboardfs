@@ -1,0 +1,21 @@
+Whiteboardfs is a collaborative drawing file system.
+It consists of 2 files in the tree.
+canvas is the image to draw to. 
+	On read, it returns a RGB24 image.
+	To write, write a RGBA32 image, which will be composited SoverD.
+update notifies of any changes.
+	On read, it returns 1 character and then blocks.
+	If a write completes, another character is sent.
+
+Dryerase is a program meant to interface with whiteboardfs.
+It will, by default, search in /mnt/whiteboard for the control files.
+Mouse 1 for black, mouse 3 for white.
+Delete to quit.
+
+TODO:
+make whiteboardfs understand multiple image types
+make whiteboardfs be able to use sub-Rectangles
+make whiteboardfs understand compressed images
+add different sizes to dryerase
+add different colors to dryerase
+add general color input to fill

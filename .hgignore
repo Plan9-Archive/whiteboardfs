@@ -1,0 +1,8 @@
+syntax: glob
+
+*.out
+*.6
+*.8
+6.*
+8.*
+*.orig
