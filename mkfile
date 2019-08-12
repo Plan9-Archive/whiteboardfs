@@ -18,7 +18,7 @@ $O.%: %.$O
 
 all:V: $EXE
 
-install:V: /$objtype/bin/$TARG
+install:V: $INST
 
 clean:V:
 	rm -f $O.$TARG [$OS].$TARG *.[$OS]
