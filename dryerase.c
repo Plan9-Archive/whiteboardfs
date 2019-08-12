@@ -7,8 +7,12 @@
 
 Image *canvas;
 Image *in;
-Image *out;
+Image *out; /* add a write queue */
 Image *clear;
+
+QLock ql;
+
+#define DEBUG(s) fprint(2, s "\n");
 
 void
 sendimage(int fd, Image *i)
@@ -24,8 +28,10 @@ sendimage(int fd, Image *i)
 		sysfatal("%r");
 	snprint((char*)buf, 5*12+1, "%11s %11d %11d %11d %11d ", chantostr(chanstr, i->chan),
 			i->r.min.x, i->r.min.y, i->r.max.x, i->r.max.y);
+	lockdisplay(display);
 	unloadimage(i, i->r, buf+5*12, s);
-	n = write(fd, buf, 5*12+s);
+	unlockdisplay(display);
+	n = pwrite(fd, buf, 5*12+s, 0);
 	if(n < 5*12+s)
 		fprint(2, "write failed, fr*ck\n");
 }
@@ -34,10 +40,13 @@ Image *
 getcanvasimage(int fd)
 {
 	Image *i;
+	
+	qlock(&ql);
 	seek(fd, 0, 0);
-	i = readimage(display, fd, 0);
+	i = readimage(display, fd, 1);
+	qunlock(&ql);
 	if(i == nil)
-		sysfatal("%r");
+		sysfatal("get: %r");
 	if(i->r.min.x != 0 || i->r.min.y != 0 || i->r.max.x <= 0 || i->r.max.y <= 0)
 		sysfatal("Bad image size.");
 	if(i->r.max.x > 4096 || i->r.max.y > 2160)
@@ -57,48 +66,23 @@ dogetwindow(void)
 {
 	if(getwindow(display, Refnone) < 0)
 		sysfatal("Cannot reconnect to display: %r");
+	lockdisplay(display);
 	draw(screen, screen->r, display->black, nil, ZP);
+	unlockdisplay(display);
 }
 
 void
 redraw(void)
 {
+	lockdisplay(display);
 	draw(screen, screen->r, canvas, nil, ZP);
 	draw(screen, screen->r, out, nil, ZP);
-}
-
-int
-mousesub(Mouse m, int *state)
-{
-	static Mouse old;
-	int redraw;
-	
-	redraw = 0;
-	switch(*state){
-	case 0:
-		if(m.buttons == 1){
-			*state = 1;
-		}else if(m.buttons == 4){
-			*state = 2;
-		}
-		break;
-	case 1:
-		if(m.buttons == 0){
-		}else{
-			line(out, old.xy, m.xy, 0, 0, 0, display->black, ZP);
-		}
-		redraw = 1;
-		break;
-	case 2:
-		redraw = 1;
-		break;
-	}
-	old = m;
-	return redraw;
+	unlockdisplay(display);
 }
 
 struct ups{
 	int ufd;
+	int cfd;
 	Channel *chan; /* char */
 } ups;
 
@@ -119,11 +103,19 @@ updateproc(void*)
 			}
 			fprint(2, "Why was there a size 0 read?\n");
 		}
+		in = getcanvasimage(ups.cfd);
+		if(in == nil)
+			sysfatal("Invalid image update read.");
+		/* potential to add dynamic resizing */
+		if(!eqrect(in->r, canvas->r))
+			sysfatal("Canvas rectangle changed.");
+		lockdisplay(display);
+		draw(canvas, canvas->r, in, nil, ZP);
+		freeimage(in);
+		unlockdisplay(display);
 		send(ups.chan, &i);
 	}
 }
-
-#define DEBUG() fprint(2, "LOL\n");
 
 void
 threadmain(int argc, char **argv)
@@ -132,7 +124,7 @@ threadmain(int argc, char **argv)
 	Rune r;
 	Mousectl *mctl;
 	Mouse m, mold; /* don't you love puns? */
-	int cfd, state;
+	int state;
 	char hdr[5*12+1];
 	long n;
 	char *dir, path[128];
@@ -148,7 +140,7 @@ threadmain(int argc, char **argv)
 	}ARGEND;
 	
 	snprint(path, sizeof(path), "%s/%s", dir, "canvas");
-	if((cfd = open(path, ORDWR)) < 0)
+	if((ups.cfd = open(path, ORDWR)) < 0)
 		sysfatal("%r");
 	snprint(path, sizeof(path), "%s/%s", dir, "update");
 	if((ups.ufd = open(path, ORDWR)) < 0)
@@ -156,16 +148,16 @@ threadmain(int argc, char **argv)
 	ups.chan = chancreate(sizeof(char), 1);
 	if(initdraw(nil, nil, argv0) < 0)
 		sysfatal("%r");
+	display->locking = 1;
+	unlockdisplay(display);
 	if((mctl = initmouse(nil, screen)) == nil)
 		sysfatal("%r");
 	if((kctl = initkeyboard(nil)) == nil)
 		sysfatal("%r");
-	if(proccreate(updateproc, &ups, 1024) < 0)
-		sysfatal("%r");
 	
 	dogetwindow();
 	
-	n = pread(cfd, hdr, 5*12, 0);
+	n = pread(ups.cfd, hdr, 5*12, 0);
 	if(n < 5*12){
 		sysfatal("No image header.");
 	}
@@ -182,11 +174,19 @@ threadmain(int argc, char **argv)
 	if(rect.max.x > 4096 || rect.max.y > 2160)
 		sysfatal("Image too large to be useful on most screens.");
 	/* can be subverted for a massive size, despite previous checking */
-	canvas = getcanvasimage(cfd);
+	
+	canvas = getcanvasimage(ups.cfd);
+	
+	lockdisplay(display);
 	out = allocimage(display, canvas->r, RGBA32, 0, DTransparent);
 	clear = allocimage(display, Rect(0,0,1,1), RGBA32, 1, DTransparent);
 	if(out == nil || clear == nil)
 		sysfatal("Allocimage failed. %r");
+	unlockdisplay(display);
+	
+	
+	if(proccreate(updateproc, &ups, 1024) < 0)
+		sysfatal("%r");
 	
 	state = 0;
 	mold.buttons = 0;
@@ -205,7 +205,9 @@ threadmain(int argc, char **argv)
 	};
 	
 	for(;;){
+		lockdisplay(display);
 		flushimage(display, 1);
+		unlockdisplay(display);
 noflush:
 		switch(alt(alts)){
 		case MOUSE:
@@ -219,21 +221,29 @@ noflush:
 					goto noflush;
 				break;
 			case 1:
+				lockdisplay(display);
 				line(out, subpt(mold.xy,screen->r.min), subpt(m.xy,screen->r.min),
 					0, 0, 0, display->black, ZP);
+				unlockdisplay(display);
 				if(m.buttons != 1){
 					state = 0;
-					sendimage(cfd, out);
+					sendimage(ups.cfd, out);
+					lockdisplay(display);
 					drawop(out, out->r, clear, nil, ZP, S);
+					unlockdisplay(display);
 				}
 				break;
 			case 2:
+				lockdisplay(display);
 				line(out, subpt(mold.xy,screen->r.min), subpt(m.xy,screen->r.min),
 					0, 0, 0, display->white, ZP);
+				unlockdisplay(display);
 				if(m.buttons != 4){
 					state = 0;
-					sendimage(cfd, out);
+					sendimage(ups.cfd, out);
+					lockdisplay(display);
 					drawop(out, out->r, clear, nil, ZP, S);
+					unlockdisplay(display);
 				}
 				break;
 			}
@@ -249,13 +259,6 @@ noflush:
 				threadexitsall(nil);
 			goto noflush;
 		case UPDATE:
-			in = getcanvasimage(cfd);
-			if(in == nil)
-				sysfatal("Invalid image update read.");
-			/* potential to add dynamic resizing */
-			if(!eqrect(in->r, canvas->r))
-				sysfatal("Canvas rectangle changed.");
-			draw(canvas, canvas->r, in, nil, ZP);
 			redraw();
 			break;
 		case NONE:
