@@ -12,8 +12,6 @@ Image *clear;
 
 QLock ql;
 
-#define DEBUG(s) fprint(2, s "\n");
-
 void
 sendimage(int fd, Image *i)
 {
@@ -31,7 +29,9 @@ sendimage(int fd, Image *i)
 	lockdisplay(display);
 	unloadimage(i, i->r, buf+5*12, s);
 	unlockdisplay(display);
+	qlock(&ql);
 	n = pwrite(fd, buf, 5*12+s, 0);
+	qunlock(&ql);
 	if(n < 5*12+s)
 		fprint(2, "write failed, fr*ck\n");
 }
@@ -64,9 +64,9 @@ usage(void)
 void
 dogetwindow(void)
 {
+	lockdisplay(display);
 	if(getwindow(display, Refnone) < 0)
 		sysfatal("Cannot reconnect to display: %r");
-	lockdisplay(display);
 	draw(screen, screen->r, display->black, nil, ZP);
 	unlockdisplay(display);
 }
@@ -194,7 +194,6 @@ threadmain(int argc, char **argv)
 	
 	dogetwindow();
 	redraw();
-	
 	enum { MOUSE, RESIZE, KEYS, UPDATE, NONE };
 	Alt alts[] = {
 		[MOUSE] =  {mctl->c, &m, CHANRCV},
@@ -229,6 +228,7 @@ noflush:
 					state = 0;
 					sendimage(ups.cfd, out);
 					lockdisplay(display);
+					draw(canvas, out->r, clear, nil, ZP);
 					drawop(out, out->r, clear, nil, ZP, S);
 					unlockdisplay(display);
 				}
@@ -242,6 +242,7 @@ noflush:
 					state = 0;
 					sendimage(ups.cfd, out);
 					lockdisplay(display);
+					draw(canvas, out->r, clear, nil, ZP);
 					drawop(out, out->r, clear, nil, ZP, S);
 					unlockdisplay(display);
 				}
