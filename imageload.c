@@ -129,3 +129,12 @@ lineloadmemimage(Memimage *i, uchar *buf, int n, int *miny)
 	*miny += dy;
 	return dy*l;
 }
+
+int
+blockloadmemimage(Memimage *i, uchar *buf, int n, int *miny, int comp)
+{
+	if(comp)
+		return blockcloadmemimage(i, buf, n, miny);
+	else
+		return lineloadmemimage(i, buf, n, miny);
+}
