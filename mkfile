@@ -13,6 +13,9 @@ default:V: all
 $O.%: %.$O
 	$LD $LDFLAGS -o $target $prereq
 
+$O.whiteboardfs: whiteboardfs.$O imageload.$O
+	$LD $LDFLAGS -o $target $prereq
+
 %.$O: %.c
 	$CC $CFLAGS $stem.c
 

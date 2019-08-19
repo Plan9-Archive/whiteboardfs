@@ -140,9 +140,6 @@ sendproc(void*)
 {
 	/* uses struct ups instead of aux arg */
 	int n;
-	char chanstr[12];
-	uchar *buf;
-	ulong s;
 	
 	threadsetname("sender");
 	for(;;){
@@ -156,20 +153,8 @@ sendproc(void*)
 			fprint(2, "Why was there a size 0 send?\n");
 		}
 		
-		s = Dy(out->r)*bytesperline(out->r, out->depth);
-		buf = malloc(5*12 + s);
-		if(buf == nil)
-			sysfatal("%r");
-		snprint((char*)buf, 5*12+1, "%11s %11d %11d %11d %11d ", chantostr(chanstr, out->chan),
-				out->r.min.x, out->r.min.y, out->r.max.x, out->r.max.y);
-		lockdisplay(display);
-		unloadimage(out, out->r, buf+5*12, s);
-		unlockdisplay(display);
+		writeimage(sends.cfd, out, 1);
 		qunlock(&qout);
-		n = pwrite(sends.cfd, buf, 5*12+s, 0);
-		if(n < 5*12+s)
-			fprint(2, "write failed, fr*ck\n");
-		free(buf);
 		writing = 0;
 		nbsend(ups.chan, nil);
 	}
@@ -205,7 +190,7 @@ threadmain(int argc, char **argv)
 		usage();
 	}ARGEND;
 	
-	snprint(path, sizeof(path), "%s/%s", dir, "canvas");
+	snprint(path, sizeof(path), "%s/%s", dir, "canvas.bit");
 	if((ups.cfd = open(path, ORDWR)) < 0)
 		sysfatal("%r");
 	sends.cfd = ups.cfd;
