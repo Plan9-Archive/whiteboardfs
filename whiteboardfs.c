@@ -8,8 +8,7 @@
 #include <memdraw.h>
 
 extern Memimage *hdrallocmemimage(char *);
-extern int blockcloadmemimage(Memimage *i, uchar *buf, int n, int *miny);
-extern int lineloadmemimage(Memimage *i, uchar *buf, int n, int *miny);
+extern int blockloadmemimage(Memimage *i, uchar *buf, int n, int *miny, int comp);
 
 enum {
 	Qroot,
@@ -335,16 +334,11 @@ fswrite(Req *r)
 		if(wq->i > 0){
 			s = r->ifcall.count - n < wq->s - wq->i ? r->ifcall.count - n : wq->s - wq->i;
 			memcpy(wq->buf + wq->i, r->ifcall.data, s);
-			if(wq->comp)
-				e = blockcloadmemimage(wq->mi, wq->buf, wq->i+r->ifcall.count, &wq->miny);
-			else
-				e = lineloadmemimage(wq->mi, wq->buf, wq->s, &wq->miny);
+			wq->i += s;
+			e = blockloadmemimage(wq->mi, wq->buf, wq->i, &wq->miny, wq->comp);
 			wq->i = 0;
 		}else{
-			if(wq->comp)
-				e = blockcloadmemimage(wq->mi, (uchar*)r->ifcall.data+n, r->ifcall.count, &wq->miny);
-			else
-				e = lineloadmemimage(wq->mi, (uchar*)r->ifcall.data+n, r->ifcall.count, &wq->miny);
+			e = blockloadmemimage(wq->mi, (uchar*)r->ifcall.data+n, r->ifcall.count, &wq->miny, wq->comp);
 		}
 		if(e < 0){
 			freememimage(wq->mi);
