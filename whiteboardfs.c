@@ -7,6 +7,10 @@
 #include <draw.h>
 #include <memdraw.h>
 
+extern Memimage *hdrallocmemimage(char *);
+extern int blockcloadmemimage(Memimage *i, uchar *buf, int n, int *miny);
+extern int lineloadmemimage(Memimage *i, uchar *buf, int n, int *miny);
+
 enum {
 	Qroot,
 	Qcanvas,
@@ -29,10 +33,13 @@ struct Readq {
 typedef struct Writeq Writeq;
 struct Writeq {
 	Rectangle r;
+	uchar comp; /* is compressed */
+	int miny; /* last y row written */
+	Memimage *mi;
 	ulong chan;
-	uvlong n; /* buf size, must be met exactly else Rerror */
+	uvlong s; /* residual write buf size */
 	uvlong i; /* current buffer index */
-	uchar *buf; /* write buffer, size 5*12+bytesperline*rows */
+	uchar *buf; /* residual write buffer, size bytesperline */
 };
 
 typedef struct Updateq Updateq;
@@ -51,7 +58,7 @@ Updateq *fqhead, *fqtail;
 Readq *rqhead, *rqtail;
 
 F root = {"/", {Qroot, 0, QTDIR}, 0555|DMDIR};
-F canvasf = {"canvas", {Qcanvas, 0, QTFILE}, 0666};
+F canvasf = {"canvas.bit", {Qcanvas, 0, QTFILE}, 0666};
 F updatef = {"update", {Qupdate, 0, QTFILE}, 0666};
 
 void
@@ -267,14 +274,14 @@ void
 fswrite(Req *r)
 {
 	Readq *rq, *next;
-	int e;
+	int n, e, s;
 	Writeq *wq;
 	
 	if(r->fid->qid.path != Qcanvas){
 		respond(r, "Cannot write to there!");
 		return;
 	}
-	
+	n = 0;
 	/* basic sanitization until I add support for general image types and compression */
 	wq = r->fid->aux;
 	if(wq == nil){
@@ -282,71 +289,115 @@ fswrite(Req *r)
 			respond(r, "write buffer too small, cannot recover header");
 			return;
 		}
-		if(memcmp(r->ifcall.data, "compressed", 10) == 0){
-			respond(r, "compressed images not supported");
-			return;
-		}
-		if(memcmp(r->ifcall.data, "   r8g8b8a8 ", 12) != 0){
-			respond(r, "image rejected, only depth supported is r8g8b8a8");
-			return;
-		}
-		/*
-		 * avoid atoi madness by just matching the header.
-		 * will need to go back to parsing integers in order
-		 * to support subrectangle drawing.
-		 */
-		if(memcmp(r->ifcall.data+12, imhdr+12, 4*12) != 0){
-			respond(r, "image rejected, rectangle doesn't match");
-			return;
-		}
 		wq = malloc(sizeof(Writeq));
 		if(wq == nil){
 			respond(r, "out of memory #1");
 			return;
 		}
-		wq->n = 5*12 + memimagebytelen(diff);
-		wq->buf = malloc(wq->n);
+		if(memcmp(r->ifcall.data, "compressed\n", 11) == 0){
+			wq->comp = 1;
+			n += 11;
+		}else{
+			wq->comp = 0;
+		}
+		wq->mi = hdrallocmemimage(r->ifcall.data + n);
+		if(wq->mi == nil){
+			free(wq);
+			respond(r, "bad header");
+			return;
+		}
+		if(!rectinrect(wq->mi->r, canvas->r)){
+			freememimage(wq->mi);
+			free(wq);
+			respond(r, "image size not within canvas rectangle");
+			return;
+		}
+		n += 60;
+		wq->i = 0;
+		if(wq->comp)
+			wq->s = 6025;
+		else
+			wq->s = bytesperline(wq->mi->r, wq->mi->depth); /* residual buffer size */
+		wq->buf = malloc(wq->s); /* residual buffer for uncompressed writes */
 		if(wq->buf == nil){
+			freememimage(wq->mi);
 			free(wq);
 			respond(r, "out of memory #2");
 			return;
 		}
+		wq->miny = wq->mi->r.min.y;
 		r->fid->aux = wq;
-		/* need to adjust for subrectangle drawing */
-		wq->r = canvas->r;
-		wq->chan = canvas->chan;
-		wq->i = 0;
 	}
-	if(wq->i + r->ifcall.count > wq->n){
-		respond(r, "invalid image bytes sent, deleting write request");
+	
+	e = 1;
+	while(n < r->ifcall.count && e > 0){
+		fprint(2, "start: n=%d e=%d wqi=%ulld\n", n, e, wq->i);
+		if(wq->i > 0){
+			s = r->ifcall.count - n < wq->s - wq->i ? r->ifcall.count - n : wq->s - wq->i;
+			memcpy(wq->buf + wq->i, r->ifcall.data, s);
+			if(wq->comp)
+				e = blockcloadmemimage(wq->mi, wq->buf, wq->i+r->ifcall.count, &wq->miny);
+			else
+				e = lineloadmemimage(wq->mi, wq->buf, wq->s, &wq->miny);
+			wq->i = 0;
+		}else{
+			if(wq->comp)
+				e = blockcloadmemimage(wq->mi, (uchar*)r->ifcall.data+n, r->ifcall.count, &wq->miny);
+			else
+				e = lineloadmemimage(wq->mi, (uchar*)r->ifcall.data+n, r->ifcall.count, &wq->miny);
+		}
+		if(e < 0){
+			freememimage(wq->mi);
+			free(wq->buf);
+			free(wq);
+			r->fid->aux = nil;
+			fprint(2, "%r\n");
+			respond(r, "error loading image. deleting write request");
+			return;
+		}
+		n += e;
+		fprint(2, "end: n=%d e=%d wqi=%ulld\n", n, e, wq->i);
+	}
+	if(n < r->ifcall.count){
+		wq->i = r->ifcall.count - n;
+		if(wq->i > wq->s)
+			sysfatal("Why would that be bigger? %ulld", wq->i);
+		memcpy(wq->buf, r->ifcall.data+n, wq->i);
+	}
+	if(wq->miny == wq->mi->r.max.y && wq->i != 0){
+		freememimage(wq->mi);
 		free(wq->buf);
 		free(wq);
+		r->fid->aux = nil;
+		respond(r, "too much data sent. deleting write request");
 		return;
 	}
-	memcpy(wq->buf+wq->i, r->ifcall.data, r->ifcall.count);
-	wq->i += r->ifcall.count;
 	r->ofcall.count = r->ifcall.count;
-	if(wq->i != wq->n){
+	if(wq->miny < wq->mi->r.max.y){
 		respond(r, nil);
 		return;
+	}else if(wq->miny > wq->mi->r.max.y){
+		/* assert cannot happen */
+		fprint(2, "write size error: %d > %d", wq->miny, wq->mi->r.max.y);
+		freememimage(wq->mi);
+		free(wq->buf);
+		free(wq);
+		r->fid->aux = nil;
+		respond(r, "image write too large, somehow. deleting write request");
+		return;
 	}
-	/* Successful image write. Load, composite, update, and notify. */
+	fprint(2, "successful image write\n");
+	/* Successful image write. composite, update, and notify. */
 	/*
 	 * Currently: wq->chan == diff->chan && wq->r == diff->r
 	 * To support different image write sizes, a new Memimage will
 	 * need to be allocated.
 	 */
-	e = loadmemimage(diff, diff->r, wq->buf+5*12, wq->n-5*12);
+	memimagedraw(canvas, canvas->r, wq->mi, ZP, nil, ZP, SoverD);
 	free(wq->buf);
 	free(wq);
 	r->fid->aux = nil;
-	if(e < 0){ /* assert/guess cannot happen */
-		respond(r, "image rejected, error in byte data");
-		fprint(2, "whiteboardfs: Invalid Twrite. Please do more testing.\n");
-		return;
-	}
 	respond(r,nil);
-	memimagedraw(canvas, canvas->r, diff, ZP, nil, ZP, SoverD);
 	imdataupdate();
 	/* respond to all waiting reads */
 	for(rq = rqhead; rq != nil; rq = next){
@@ -406,6 +457,7 @@ fsdestroyfid(Fid *fid)
 		fid->aux = nil;
 	}else if(fid->qid.path == Qcanvas){
 		wq = fid->aux;
+		freememimage(wq->mi);
 		free(wq->buf);
 		free(wq);
 		fid->aux = nil;

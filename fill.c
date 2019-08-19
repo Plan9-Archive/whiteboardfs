@@ -36,7 +36,7 @@ main(int argc, char *argv[])
 		break;
 	}ARGEND;
 	
-	canvasfd = open("/mnt/whiteboard/canvas", OWRITE);
+	canvasfd = open("/mnt/whiteboard/canvas.bit", OWRITE);
 	if(canvasfd < 0)
 		sysfatal("%r");
 	
@@ -87,6 +87,6 @@ main(int argc, char *argv[])
 	n = write(canvasfd, buf, sizeof(buf));
 	fprint(2, "buf %d\n", n);
 	if(n < 4*256*256)
-		sysfatal("Did not write 4*256*256 bytes");
+		sysfatal("Did not write 4*256*256 bytes: %r");
 	exits(nil);
 }
