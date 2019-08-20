@@ -10,6 +10,8 @@
 extern Memimage *hdrallocmemimage(char *);
 extern int blockloadmemimage(Memimage *i, uchar *buf, int n, int *miny, int comp);
 
+#define DEBUG 0
+
 enum {
 	Qroot,
 	Qcanvas,
@@ -330,7 +332,7 @@ fswrite(Req *r)
 	
 	e = 1;
 	while(n < r->ifcall.count && e > 0){
-		fprint(2, "start: n=%d e=%d wqi=%ulld\n", n, e, wq->i);
+		if(DEBUG) fprint(2, "start: n=%d e=%d wqi=%ulld\n", n, e, wq->i);
 		if(wq->i > 0){
 			s = r->ifcall.count - n < wq->s - wq->i ? r->ifcall.count - n : wq->s - wq->i;
 			memcpy(wq->buf + wq->i, r->ifcall.data, s);
@@ -350,7 +352,7 @@ fswrite(Req *r)
 			return;
 		}
 		n += e;
-		fprint(2, "end: n=%d e=%d wqi=%ulld\n", n, e, wq->i);
+		if(DEBUG) fprint(2, "end: n=%d e=%d wqi=%ulld\n", n, e, wq->i);
 	}
 	if(n < r->ifcall.count){
 		wq->i = r->ifcall.count - n;
@@ -380,7 +382,7 @@ fswrite(Req *r)
 		respond(r, "image write too large, somehow. deleting write request");
 		return;
 	}
-	fprint(2, "successful image write\n");
+	if(DEBUG) fprint(2, "successful image write\n");
 	/* Successful image write. composite, update, and notify. */
 	/*
 	 * Currently: wq->chan == diff->chan && wq->r == diff->r
