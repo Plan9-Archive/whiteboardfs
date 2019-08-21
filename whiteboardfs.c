@@ -390,6 +390,7 @@ fswrite(Req *r)
 	 * need to be allocated.
 	 */
 	memimagedraw(canvas, canvas->r, wq->mi, ZP, nil, ZP, SoverD);
+	freememimage(wq->mi);
 	free(wq->buf);
 	free(wq);
 	r->fid->aux = nil;
