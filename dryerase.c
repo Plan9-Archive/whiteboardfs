@@ -153,7 +153,9 @@ sendproc(void*)
 			fprint(2, "Why was there a size 0 send?\n");
 		}
 		
+		qlock(&qout);
 		writeimage(sends.cfd, out, 1);
+		drawop(out, out->r, clear, nil, ZP, S);
 		qunlock(&qout);
 		writing = 0;
 		nbsend(ups.chan, nil);
@@ -163,7 +165,6 @@ sendproc(void*)
 void
 sendoutimage(void)
 {
-	qlock(&qout); /* this is a really bad idea, but it will work...? */
 	writing = 1;
 	send(sends.chan, nil);
 }
@@ -193,7 +194,12 @@ threadmain(int argc, char **argv)
 	snprint(path, sizeof(path), "%s/%s", dir, "canvas.bit");
 	if((ups.cfd = open(path, ORDWR)) < 0)
 		sysfatal("%r");
-	sends.cfd = ups.cfd;
+	/*
+	 * readimage and writeimage both implicitly seek on the fd.
+	 * dup doesn't separate the seeks, so open again.
+	 */
+	if((sends.cfd = open(path, ORDWR)) < 0)
+		sysfatal("%r");
 	snprint(path, sizeof(path), "%s/%s", dir, "update");
 	if((ups.ufd = open(path, ORDWR)) < 0)
 		sysfatal("%r");
@@ -283,11 +289,10 @@ noflush:
 				qunlock(&qout);
 				if(m.buttons != 1){
 					state = 0;
-					sendoutimage();
 					qlock(&qout);
 					lockdisplay(display);
-					draw(canvas, out->r, clear, nil, ZP);
-					drawop(out, out->r, clear, nil, ZP, S);
+					sendoutimage();
+					draw(canvas, out->r, out, nil, ZP);
 					unlockdisplay(display);
 					qunlock(&qout);
 				}
@@ -301,11 +306,10 @@ noflush:
 				qunlock(&qout);
 				if(m.buttons != 4){
 					state = 0;
-					sendoutimage();
 					qlock(&qout);
 					lockdisplay(display);
-					draw(canvas, out->r, clear, nil, ZP);
-					drawop(out, out->r, clear, nil, ZP, S);
+					sendoutimage();
+					draw(canvas, out->r, out, nil, ZP);
 					unlockdisplay(display);
 					qunlock(&qout);
 				}

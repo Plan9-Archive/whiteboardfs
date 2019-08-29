@@ -223,7 +223,7 @@ fsread(Req *r)
 	uvlong path;
 	Updateq *fq;
 	Readq *rq;
-	ulong c, o, n;
+	ulong c, o, n, maxoff;
 	
 	path = r->fid->qid.path;
 	if(path == Qroot){
@@ -242,9 +242,10 @@ fsread(Req *r)
 			o += n;
 		}
 		o -= 5*12;
-		if(o < memimagebytelen(canvas) && c > 0){
-			if(c + o > memimagebytelen(canvas))
-				c = memimagebytelen(canvas) - o;
+		maxoff = memimagebytelen(canvas);
+		if(o < maxoff && c > 0){
+			if(c + o > maxoff)
+				c = maxoff - o;
 			memcpy(r->ofcall.data + n, imdata + o, c);
 			n += c;
 		}
@@ -277,6 +278,7 @@ fswrite(Req *r)
 	Readq *rq, *next;
 	int n, e, s;
 	Writeq *wq;
+	Updateq *uq;
 	
 	if(r->fid->qid.path != Qcanvas){
 		respond(r, "Cannot write to there!");
@@ -396,6 +398,10 @@ fswrite(Req *r)
 	r->fid->aux = nil;
 	respond(r,nil);
 	imdataupdate();
+	/* invalidate all updateqs */
+	for(uq = fqhead; uq != nil; uq = uq->link){
+		uq->hasread = 0;
+	}
 	/* respond to all waiting reads */
 	for(rq = rqhead; rq != nil; rq = next){
 		/* respond() calls destroyreq, which frees this rq */
