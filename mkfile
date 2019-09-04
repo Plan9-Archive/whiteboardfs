@@ -1,6 +1,6 @@
 </$objtype/mkfile
 
-TARG=whiteboardfs dryerase fill
+TARG=whiteboardfs dryerase
 
 EXE=${TARG:%=$O.%}
 INST=${TARG:%=/$objtype/bin/%}
