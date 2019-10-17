@@ -345,8 +345,6 @@ threadmain(int argc, char **argv)
 	if(cflag)
 		alts[MAKEU].op = CHANRCV;
 	
-	fprint(2, "kbdfd: cons: %d ctl: %d\n", kctl->consfd, kctl->ctlfd);
-	
 	for(;;){
 		lockdisplay(display);
 		flushimage(display, 1);
