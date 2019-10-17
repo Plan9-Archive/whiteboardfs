@@ -10,6 +10,7 @@ Image *in;
 Image *out; /* add a write queue */
 Image *clear;
 Image *grey;
+Image *pencol;
 Point drawpt;
 int pensize;
 int writing;
@@ -55,14 +56,19 @@ dogetwindow(void)
 void
 redraw(void)
 {
-	Point ss, lu;
+	Point ss, lu, mid;
 	int y;
 	char *mesg;
 	
 	lockdisplay(display);
+	draw(screen, screen->r, display->black, nil, ZP);
+	mid.x = Dx(screen->r)/2 + screen->r.min.x;
+	mid.y = Dy(screen->r)/2 + screen->r.min.y;
+	draw(screen, Rect(mid.x, screen->r.min.y, screen->r.max.x, mid.y), display->white, nil, ZP);
+	draw(screen, Rect(screen->r.min.x, mid.y, mid.x, screen->r.max.y), display->white, nil, ZP);
+	draw(screen, screen->r, pencol, nil, ZP);
 	drawpt.x = (Dx(screen->r) - Dx(canvas->r))/2 + screen->r.min.x;
 	drawpt.y = (Dy(screen->r) - Dy(canvas->r))/2 + screen->r.min.y;
-	draw(screen, screen->r, display->black, nil, ZP);
 	border(screen, rectaddpt(canvas->r, drawpt), -2, grey, ZP);
 	draw(screen, screen->r, canvas, nil, subpt(screen->r.min, drawpt));
 	draw(screen, screen->r, out, nil, subpt(screen->r.min, drawpt));
@@ -169,23 +175,64 @@ sendoutimage(void)
 	send(sends.chan, nil);
 }
 
+struct{
+	Channel *chan;
+	int fd;
+} makeu;
+void
+makeuproc(void*){
+	char buf[12];
+	ulong col;
+	int n;
+	
+	for(;;){
+		n = read(makeu.fd, buf, sizeof(buf));
+		if(n < 1){
+			yield(); /* if error is due to exiting, we'll exit here */
+			if(n < 0){
+				fprint(2, "whiteboard probably closed.\n");
+				threadexitsall("read error");
+			}
+			if(n == 0){
+				fprint(2, "makeu closed?\n");
+				//threadexitsall(nil);
+			}
+		}
+		buf[sizeof(buf)-1] = '\0';
+		col = strtoul(buf, nil, 0);
+		send(makeu.chan, &col);
+	}
+}
+
 void
 threadmain(int argc, char **argv)
 {
-	Keyboardctl *kctl;
+	static Keyboardctl *kctl;
 	Rune r;
-	Mousectl *mctl;
-	Mouse m, mold; /* don't you love puns? */
+	static Mousectl *mctl;
+	static Mouse m, mold; /* don't you love puns? */
 	int state;
-	char hdr[5*12+1];
+	static char hdr[5*12+1];
 	long n;
-	char *dir, path[128];
+	char *dir;
+	static char path[128];
 	Rectangle rect;
+	ulong col;
+	int cflag;
+	uchar ldcol[4];
+	int pid;
+	int pfd[2];
+	char *srvwsys;
+	int wsysfd;
 	
 	dir = "/mnt/whiteboard";
+	cflag = 0;
 	ARGBEGIN{
 	case 'd':
 		dir = argv[0];
+		break;
+	case 'c':
+		cflag = 1;
 		break;
 	default:
 		usage();
@@ -214,6 +261,35 @@ threadmain(int argc, char **argv)
 	if((kctl = initkeyboard(nil)) == nil)
 		sysfatal("%r");
 	
+	if(cflag){
+		if(pipe(pfd) < 0)
+			sysfatal("%s: pipe failed: %r", argv0);
+		makeu.fd = pfd[0];
+		pid = rfork(RFFDG|RFREND|RFPROC|RFNOWAIT);
+		if(pid == 0){
+			dup(pfd[1], 1);
+			srvwsys = getenv("wsys");
+			if(srvwsys == nil)
+				sysfatal("can't find $wsys: %r");
+			rfork(RFNAMEG);
+			wsysfd = open(srvwsys, ORDWR);
+			if(wsysfd < 0)
+				sysfatal("can't open $wsys: %r");
+			if(mount(wsysfd, -1, "/mnt/wsys", MREPL, "new -dx 400 -dy 300") < 0)
+				sysfatal("can't mount new window: %r");
+			if(bind("/mnt/wsys", "/dev", MBEFORE) < 0)
+				sysfatal("can't bind: %r");
+			execl("/bin/makeu", "makeu", "-p", "-c", "0x000000FF", nil);
+			fprint(2, "%s: makeu exec failed: %r", argv0);
+			threadexitsall("makeu exec failed");
+		}
+		makeu.chan = chancreate(sizeof(ulong), 1);
+		if(proccreate(makeuproc, &sends, 4096) < 0)
+			sysfatal("%r");
+	}else{
+		makeu.chan = nil;
+	}
+	
 	dogetwindow();
 	
 	n = pread(ups.cfd, hdr, 5*12, 0);
@@ -240,6 +316,7 @@ threadmain(int argc, char **argv)
 	out = allocimage(display, canvas->r, RGBA32, 0, DTransparent);
 	clear = allocimage(display, Rect(0,0,1,1), RGBA32, 1, DTransparent);
 	grey = allocimage(display, Rect(0,0,1,1), RGBA32, 1, 0x555555FF);
+	pencol = allocimage(display, Rect(0,0,1,1), RGBA32, 1, DBlack);
 	if(out == nil || clear == nil || grey == nil)
 		sysfatal("Allocimage failed. %r");
 	unlockdisplay(display);
@@ -255,14 +332,20 @@ threadmain(int argc, char **argv)
 	
 	dogetwindow();
 	redraw();
-	enum { MOUSE, RESIZE, KEYS, UPDATE, NONE };
+	enum { MOUSE, RESIZE, KEYS, UPDATE, MAKEU, NONE };
 	Alt alts[] = {
 		[MOUSE] =  {mctl->c, &m, CHANRCV},
 		[RESIZE] =  {mctl->resizec, nil, CHANRCV},
 		[KEYS] = {kctl->c, &r, CHANRCV},
 		[UPDATE] = {ups.chan, nil, CHANRCV},
-		[NONE] =  {nil, nil, CHANEND}
+		[MAKEU] =  {makeu.chan, &col, CHANEND},
+		[NONE] =  {nil, nil, CHANEND},
 	};
+	
+	if(cflag)
+		alts[MAKEU].op = CHANRCV;
+	
+	fprint(2, "kbdfd: cons: %d ctl: %d\n", kctl->consfd, kctl->ctlfd);
 	
 	for(;;){
 		lockdisplay(display);
@@ -284,7 +367,7 @@ noflush:
 				qlock(&qout);
 				lockdisplay(display);
 				line(out, subpt(mold.xy, drawpt), subpt(m.xy, drawpt),
-					Enddisc, Enddisc, pensize, display->black, ZP);
+					Enddisc, Enddisc, pensize, pencol, ZP);
 				unlockdisplay(display);
 				qunlock(&qout);
 				if(m.buttons != 1){
@@ -336,6 +419,14 @@ noflush:
 			}
 			goto noflush;
 		case UPDATE:
+			redraw();
+			break;
+		case MAKEU:
+			ldcol[0] = col>>0 & 0xFF;
+			ldcol[1] = col>>8 & 0xFF;
+			ldcol[2] = col>>16 & 0xFF;
+			ldcol[3] = col>>24 & 0xFF;
+			loadimage(pencol, pencol->r, ldcol, sizeof(ldcol));
 			redraw();
 			break;
 		case NONE:
