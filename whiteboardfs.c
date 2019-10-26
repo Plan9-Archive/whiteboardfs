@@ -192,7 +192,7 @@ fsopen(Req *r)
 		else
 			fqhead = fq; /* assert fqhead == nil */
 		fqtail = fq;
-		fq->hasread = 0;
+		fq->hasread = 1;
 		r->fid->aux = fq;
 	}
 	
