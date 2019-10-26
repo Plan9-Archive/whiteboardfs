@@ -19,9 +19,14 @@ $O.whiteboardfs: whiteboardfs.$O imageload.$O
 %.$O: %.c
 	$CC $CFLAGS $stem.c
 
+/sys/man/4/whiteboardfs: whiteboardfs.4.man
+	cp whiteboardfs.4.man /sys/man/4/whiteboardfs
+
 all:V: $EXE
 
 install:V: $INST
+
+man:V: /sys/man/4/whiteboardfs
 
 clean:V:
 	rm -f $O.$TARG [$OS].$TARG *.[$OS]

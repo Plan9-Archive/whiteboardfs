@@ -40,7 +40,7 @@ getcanvasimage(int fd)
 void
 usage(void)
 {
-	fprint(2, "usage: %s [-d dir]\n", argv0);
+	fprint(2, "usage: %s [-c] [-d dir]\n", argv0);
 	threadexitsall("usage");
 }
 

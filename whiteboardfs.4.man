@@ -1,0 +1,117 @@
+.TH WHITEBOARDFS 4
+.SH NAME
+whiteboardfs, dryerase \- collaborative drawing file server
+.SH SYNOPSIS
+.PP
+.B whiteboardfs
+[
+.B -D
+] [
+.B -m
+.I mntpnt
+] [
+.B -s
+.I srvname
+] [
+.B -x
+.I width
+] [
+.B -y
+.I height
+]
+.PP
+.B dryerase
+[
+.B -c
+] [
+.B -d
+.I directory
+]
+.SH DESCRIPTION
+.I Whiteboardfs
+is a file server for collaborative drawing. It serves the following files:
+.TF canvas.bit
+.TP
+.B canvas.bit
+Reads will return an uncompressed image, like 
+.BR /dev/screen .
+This allows data races to not interrupt a 9p data stream, at the cost of greatly increased read latency. Writes must send a well-formed image within the size of the canvas. Writes may be compressed as specified in
+.IR image (6).
+Writes will be composited using SoverD. Unsuccessful writes will return Rerror and be discarded.
+.TP
+.B update
+Reads will block. Whenever a write is successful, a single character is read.
+.PD
+.PP
+.I Whiteboardfs
+has the following options:
+.TF mmntpnta
+.TP
+.B -D
+Turn on 9p debug output.
+.TP
+.BI -m " mntpnt"
+Set the mount point for the remote filesystem. The default is 
+.BR /mnt/whiteboard .
+.TP
+.BI -s " srvname"
+Post the service as
+.BI /srv/ srvname.
+.TP
+.BI -x " width"
+Set the canvas image width. The default is 256.
+.TP
+.BI -y " height"
+Set the canvas image height. The default is 256.
+.PD
+.PP
+.I Dryerase
+is a client for drawing on a whiteboardfs. Mouse 1 will draw black, mouse 3 will draw white. When a mouse button is released,
+.I dryerase
+will write the changes to the
+.B canvas.bit
+file.
+The 
+.B [
+and
+.B ]
+keys will decrease and increase the pen size, respectively. The
+.B Del
+key will end the
+.I dryerase
+session.
+.PP
+Some diagnostic info is presented. When "reading..." is shown, the
+.B canvas.bit
+file is currently being read, and when completed, the shown image will update.
+When "writing..." is shown,
+.I dryerase
+is writing changes to the
+.B canvas.bit
+file.
+.PP
+.I Dryerase
+has a few options:
+.TF directory
+.TP
+.B -c
+Color. An instance of
+.IR makeu (1)
+will fork to a new window. Sending colors from
+.I makeu
+will replace the mouse 1 color.
+.TP
+.BI -d " directory"
+Specify the path where whiteboardfs is mounted.
+.SH SOURCE
+.B https://bitbucket.org/amavect/whiteboardfs
+.br
+.SH SEE ALSO
+.IR colors (1), 
+.IR paint (1), 
+.IR makeu (1)
+.SH BUGS
+.PP
+While drawing is double-buffered in
+.IR dryerase ,
+continuing to draw while "writing..." is shown may result in lost mouse inputs.
