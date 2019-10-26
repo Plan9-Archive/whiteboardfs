@@ -7,7 +7,8 @@
 
 Image *canvas;
 Image *in;
-Image *out; /* add a write queue */
+Image *out; /* add a write queue (delete comment when outbuf works) */
+Image *outbuf; /* double buffering */
 Image *clear;
 Image *grey;
 Image *pencol;
@@ -16,7 +17,6 @@ int pensize;
 int writing;
 int reading;
 
-QLock qout;
 QLock ql;
 
 Image *
@@ -71,6 +71,7 @@ redraw(void)
 	drawpt.y = (Dy(screen->r) - Dy(canvas->r))/2 + screen->r.min.y;
 	border(screen, rectaddpt(canvas->r, drawpt), -2, grey, ZP);
 	draw(screen, screen->r, canvas, nil, subpt(screen->r.min, drawpt));
+	draw(screen, screen->r, outbuf, nil, subpt(screen->r.min, drawpt));
 	draw(screen, screen->r, out, nil, subpt(screen->r.min, drawpt));
 	if(writing){
 		mesg = "writing...";
@@ -112,7 +113,7 @@ updateproc(void*)
 	threadsetname("updater");
 	for(;;){
 		n = read(ups.ufd, &i, sizeof(i));
-		if(n != 1){
+		if(n <= 0){
 			yield(); /* if error is due to exiting, we'll exit here */
 			if(n < 0){
 				fprint(2, "Whiteboard probably closed.\n");
@@ -139,17 +140,19 @@ updateproc(void*)
 
 struct{
 	int cfd;
-	Channel *chan; /* char */
+	Channel *chan; /* Image *i */
 } sends;
 void
 sendproc(void*)
 {
 	/* uses struct ups instead of aux arg */
 	int n;
+	Image *im;
 	
+	im = nil;
 	threadsetname("sender");
 	for(;;){
-		n = recv(sends.chan, nil);
+		n = recv(sends.chan, &im);
 		if(n != 1){
 			yield(); /* if error is due to exiting, we'll exit here */
 			if(n < 0){
@@ -159,10 +162,10 @@ sendproc(void*)
 			fprint(2, "Why was there a size 0 send?\n");
 		}
 		
-		qlock(&qout);
-		writeimage(sends.cfd, out, 1);
-		drawop(out, out->r, clear, nil, ZP, S);
-		qunlock(&qout);
+		writeimage(sends.cfd, im, 1);
+		lockdisplay(display);
+		drawop(im, im->r, clear, nil, ZP, S);
+		unlockdisplay(display);
 		writing = 0;
 		nbsend(ups.chan, nil);
 	}
@@ -171,12 +174,17 @@ sendproc(void*)
 void
 sendoutimage(void)
 {
+	Image *i;
+	
+	send(sends.chan, &out);
 	writing = 1;
-	send(sends.chan, nil);
+	i = out;
+	out = outbuf;
+	outbuf = i;
 }
 
 struct{
-	Channel *chan;
+	Channel *chan; /* ulong */
 	int fd;
 } makeu;
 void
@@ -211,6 +219,8 @@ threadmain(int argc, char **argv)
 	Rune r;
 	static Mousectl *mctl;
 	static Mouse m, mold; /* don't you love puns? */
+	Point drawpt;
+	int inside;
 	int state;
 	static char hdr[5*12+1];
 	long n;
@@ -251,7 +261,7 @@ threadmain(int argc, char **argv)
 	if((ups.ufd = open(path, ORDWR)) < 0)
 		sysfatal("%r");
 	ups.chan = chancreate(sizeof(char), 1);
-	sends.chan = chancreate(sizeof(char), 0);
+	sends.chan = chancreate(sizeof(Image*), 0);
 	if(initdraw(nil, nil, argv0) < 0)
 		sysfatal("%r");
 	display->locking = 1;
@@ -314,10 +324,11 @@ threadmain(int argc, char **argv)
 	
 	lockdisplay(display);
 	out = allocimage(display, canvas->r, RGBA32, 0, DTransparent);
+	outbuf = allocimage(display, canvas->r, RGBA32, 0, DTransparent);
 	clear = allocimage(display, Rect(0,0,1,1), RGBA32, 1, DTransparent);
 	grey = allocimage(display, Rect(0,0,1,1), RGBA32, 1, 0x555555FF);
 	pencol = allocimage(display, Rect(0,0,1,1), RGBA32, 1, DBlack);
-	if(out == nil || clear == nil || grey == nil)
+	if(out == nil || grey == nil)
 		sysfatal("Allocimage failed. %r");
 	unlockdisplay(display);
 	
@@ -354,45 +365,40 @@ noflush:
 		case MOUSE:
 			switch(state){
 			case 0:
-				if(m.buttons == 1)
+				drawpt.x = (Dx(screen->r) - Dx(canvas->r))/2 + screen->r.min.x;
+				drawpt.y = (Dy(screen->r) - Dy(canvas->r))/2 + screen->r.min.y;
+				inside = ptinrect(subpt(m.xy, drawpt), canvas->r);
+				if(m.buttons == 1 && inside)
 					state = 1;
-				else if(m.buttons == 4)
+				else if(m.buttons == 4 && inside)
 					state = 2;
 				else
 					goto noflush;
 				break;
 			case 1:
-				qlock(&qout);
 				lockdisplay(display);
 				line(out, subpt(mold.xy, drawpt), subpt(m.xy, drawpt),
 					Enddisc, Enddisc, pensize, pencol, ZP);
 				unlockdisplay(display);
-				qunlock(&qout);
 				if(m.buttons != 1){
 					state = 0;
-					qlock(&qout);
 					lockdisplay(display);
-					sendoutimage();
 					draw(canvas, out->r, out, nil, ZP);
 					unlockdisplay(display);
-					qunlock(&qout);
+					sendoutimage();
 				}
 				break;
 			case 2:
-				qlock(&qout);
 				lockdisplay(display);
 				line(out, subpt(mold.xy, drawpt), subpt(m.xy, drawpt),
 					Enddisc, Enddisc, pensize, display->white, ZP);
 				unlockdisplay(display);
-				qunlock(&qout);
 				if(m.buttons != 4){
 					state = 0;
-					qlock(&qout);
 					lockdisplay(display);
-					sendoutimage();
 					draw(canvas, out->r, out, nil, ZP);
 					unlockdisplay(display);
-					qunlock(&qout);
+					sendoutimage();
 				}
 				break;
 			}
