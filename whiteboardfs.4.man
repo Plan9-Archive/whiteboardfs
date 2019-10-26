@@ -25,7 +25,7 @@ whiteboardfs, dryerase \- collaborative drawing file server
 .B -c
 ] [
 .B -d
-.I directory
+.I dir
 ]
 .SH DESCRIPTION
 .I Whiteboardfs
@@ -45,7 +45,7 @@ Reads will block. Whenever a write is successful, a single character is read.
 .PP
 .I Whiteboardfs
 has the following options:
-.TF mmntpnta
+.TF "-s srvname"
 .TP
 .B -D
 Turn on 9p debug output.
@@ -92,7 +92,7 @@ file.
 .PP
 .I Dryerase
 has a few options:
-.TF directory
+.TF "-d dir"
 .TP
 .B -c
 Color. An instance of
@@ -101,7 +101,7 @@ will fork to a new window. Sending colors from
 .I makeu
 will replace the mouse 1 color.
 .TP
-.BI -d " directory"
+.BI -d " dir"
 Specify the path where whiteboardfs is mounted.
 .SH SOURCE
 .B https://bitbucket.org/amavect/whiteboardfs
